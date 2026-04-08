@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 
 function TicketsPage() {
+  const navigate = useNavigate()
   const [tickets, setTickets] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -169,24 +171,44 @@ function TicketsPage() {
             {tickets.map((ticket) => (
               <div
                 key={ticket.id}
-                className="bg-dark-card rounded-xl border border-dark-border p-4 hover:border-blue-500/50 transition-colors"
+                onClick={() => navigate(`/ticket/${ticket.id}`)}
+                className="bg-dark-card rounded-xl border border-dark-border p-5 hover:border-blue-500/50 transition-colors cursor-pointer"
               >
-                <div className="flex items-start justify-between mb-2">
-                  <h3 className="text-lg font-semibold text-dark-text flex-1">
-                    {ticket.title}
-                  </h3>
-                  <div className="flex items-center gap-2">
-                    <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getPriorityColor(ticket.priority)}`}>
-                      {ticket.priority}
+                {/* Header with Ticket ID and Status */}
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <span className="px-3 py-1 rounded-full text-xs font-bold bg-blue-500/20 text-blue-400 border border-blue-500/30">
+                      #{ticket.ticket_id}
                     </span>
                     <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getStatusColor(ticket.status)}`}>
                       {ticket.status}
                     </span>
                   </div>
+                  <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getPriorityColor(ticket.priority)}`}>
+                    {ticket.priority}
+                  </span>
                 </div>
-                <p className="text-sm text-dark-text-muted">
-                  {ticket.description}
-                </p>
+                
+                {/* Title */}
+                <h3 className="text-lg font-semibold text-dark-text mb-2">
+                  {ticket.title}
+                </h3>
+                
+                {/* Description */}
+                <div className="mb-3">
+                  <p className="text-sm text-dark-text-muted">
+                    {ticket.description && ticket.description.length > 60 
+                      ? ticket.description.slice(0, 60) + '...' 
+                      : ticket.description || 'No description'}
+                  </p>
+                </div>
+                
+                {/* Footer with Created Time */}
+                <div className="flex items-center justify-between pt-3 border-t border-dark-border">
+                  <span className="text-xs text-gray-500">
+                    Created: {ticket.created_at ? new Date(ticket.created_at).toLocaleString() : 'N/A'}
+                  </span>
+                </div>
               </div>
             ))}
           </div>

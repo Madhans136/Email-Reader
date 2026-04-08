@@ -47,25 +47,20 @@ function Dashboard({ activeMenu }) {
       })
       
       // Convert threads to email format for EmailList
-      // Now using command field instead of replies array
+      // Using raw email data: id, subject, from, date, body
       const formattedEmails = threads.map((thread, idx) => ({
-        id: String(idx + 1),
-        subject: thread.title || 'No Subject',
-        thread_id: thread.thread_id,
-        body: thread.description,
-        description: thread.description,
-        title: thread.title,
-        command: thread.command || '',  // Reply content from subsequent messages
-        from_email: thread.from_email,
-        is_replied: !!(thread.command && thread.command.length > 0),
+        id: thread.id || String(idx + 1),
+        subject: thread.subject || 'No Subject',
+        from: thread.from || thread.from_email || '',
+        date: thread.date || '',
+        body: thread.body || '',
+        is_replied: false,
         is_read: true
       }))
       
-      // Sort by has command (replies > 0 first)
+      // Sort by subject alphabetically
       const sortedEmails = [...formattedEmails].sort((a, b) => {
-        const aReplied = (a.command && a.command.length > 0) ? 1 : 0
-        const bReplied = (b.command && b.command.length > 0) ? 1 : 0
-        return bReplied - aReplied || a.subject.localeCompare(b.subject)
+        return a.subject.localeCompare(b.subject)
       })
       
       setEmails(sortedEmails)
@@ -212,56 +207,50 @@ function Dashboard({ activeMenu }) {
   }
 
   return (
-    <div className="h-full flex flex-col">
-      {/* Top Bar */}
-      <header className="bg-dark-card border-b border-dark-border px-6 py-4 flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold text-dark-text">
-            {activeMenu === 'Dashboard' ? 'Dashboard Overview' : 'Email Management'}
-          </h2>
-          <p className="text-sm text-dark-text-muted">
-            {activeMenu === 'Dashboard' 
-              ? 'Monitor your AI email processing system' 
-              : 'Manage and view your emails'}
-          </p>
+  <div className="h-full flex flex-col bg-[#0B0F1A]">
+    {/* Refined Top Bar */}
+    <header className="bg-[#111622] border-b border-[#262D3D] px-8 py-5 flex items-center justify-between">
+      <div>
+        <h2 className="text-xl font-bold text-white tracking-tight">
+          {activeMenu === 'Dashboard' ? 'System Overview' : 'Thread Manager'}
+        </h2>
+        <p className="text-xs font-medium text-gray-500 uppercase tracking-widest mt-1">
+          {activeMenu === 'Dashboard' ? 'AI Processing Metrics' : 'Inbox Activity'}
+        </p>
+      </div>
+      <div className="flex items-center gap-4">
+        <button className="p-2 rounded-xl bg-[#1C2230] text-gray-400 hover:text-white transition-colors border border-[#262D3D]">
+          <span className="text-lg">🔔</span>
+        </button>
+        <button className="p-2 rounded-xl bg-[#1C2230] text-gray-400 hover:text-white transition-colors border border-[#262D3D]">
+          <span className="text-lg">⚙️</span>
+        </button>
+      </div>
+    </header>
+
+    {/* Main Content Area */}
+    <div className="flex-1 flex flex-col p-8 overflow-hidden">
+      {activeMenu === 'Dashboard' && <StatsCards stats={emailStats} />}
+
+      <div className="flex-1 flex bg-[#111622] rounded-3xl border border-[#262D3D] overflow-hidden shadow-2xl">
+        {/* Left Side: Email List */}
+        <div className="w-1/3 border-r border-[#262D3D]">
+          <EmailList 
+            emails={emails} 
+            selectedEmailId={selectedEmail?.id} 
+            onSelectEmail={handleSelectEmail} 
+            totalInbox={apiData.total_threads}
+          />
         </div>
-        <div className="flex items-center gap-3">
-          <button className="p-2 rounded-lg bg-dark-bg hover:bg-dark-border text-dark-text-muted hover:text-dark-text transition-colors">
-            <span className="text-xl">🔔</span>
-          </button>
-          <button className="p-2 rounded-lg bg-dark-bg hover:bg-dark-border text-dark-text-muted hover:text-dark-text transition-colors">
-            <span className="text-xl">⚙️</span>
-          </button>
-        </div>
-      </header>
 
-      {/* Content */}
-      <div className="flex-1 flex flex-col min-h-0 p-6">
-        {/* Stats Cards - Only show on Dashboard */}
-        {activeMenu === 'Dashboard' && (
-          <StatsCards stats={emailStats} />
-        )}
-
-        {/* Email Section */}
-        <div className="flex h-[calc(100vh-120px)] bg-dark-card rounded-xl border border-dark-border overflow-hidden">
-          {/* Left - Email List */}
-          <div className="w-1/2 border-r border-dark-border flex flex-col">
-            <EmailList
-              emails={emails}
-              selectedEmailId={selectedEmail?.id}
-              onSelectEmail={handleSelectEmail}
-              totalInbox={apiData.total_threads}
-            />
-          </div>
-
-          {/* Right - Email Detail */}
-          <div className="w-1/2 flex flex-col bg-dark-bg/30">
-            <EmailDetail email={selectedEmail} />
-          </div>
+        {/* Right Side: Detail View */}
+        <div className="w-2/3 bg-[#0B0F1A]/50 backdrop-blur-sm">
+          <EmailDetail email={selectedEmail} />
         </div>
       </div>
     </div>
-  )
+  </div>
+)
 }
 
 export default Dashboard

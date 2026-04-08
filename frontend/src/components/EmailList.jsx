@@ -38,6 +38,11 @@ function EmailList({ emails, selectedEmailId, onSelectEmail, totalInbox }) {
                 {email.subject}
               </h3>
             </div>
+            {email.from && (
+              <p className="text-xs text-gray-500 mt-1">
+                From: {email.from}
+              </p>
+            )}
             <p className="text-sm text-dark-text-muted/70 mt-1 line-clamp-1">
               {getPreview(email.body)}
             </p>

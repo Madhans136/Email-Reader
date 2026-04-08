@@ -1,55 +1,44 @@
 import React from 'react'
 
 const menuItems = [
-  { id: 'Dashboard', label: 'Dashboard', icon: '📊' },
-  { id: 'Emails', label: 'Emails', icon: '📧' },
-  { id: 'Tickets', label: 'Tickets', icon: '🎫' },
+  { id: 'Dashboard', label: 'Dashboard', icon: 'M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z' },
+  { id: 'Emails', label: 'Emails', icon: 'M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z' },
+  { id: 'Tickets', label: 'Tickets', icon: 'M18 7H6V5h12v2zm0 5H6v-2h12v2zm0 5H6v-2h12v2z' },
 ]
 
 function Sidebar({ activeMenu, setActiveMenu }) {
   return (
-    <aside className="w-64 bg-dark-card border-r border-dark-border flex flex-col">
-      {/* Logo */}
-      <div className="p-6 border-b border-dark-border">
-        <h1 className="text-xl font-bold text-dark-text flex items-center gap-2">
-          <span className="text-2xl">🤖</span>
-          AI Email Reader
+    <aside className="w-64 bg-[#111622] border-r border-[#262D3D] flex flex-col">
+      <div className="p-8">
+        <h1 className="text-lg font-bold tracking-tight text-white flex items-center gap-3">
+          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center shadow-lg shadow-indigo-500/20">
+            <span className="text-xs">AI</span>
+          </div>
+          EmailReader
         </h1>
       </div>
 
-      {/* Navigation */}
-      <nav className="flex-1 p-4">
-        <ul className="space-y-2">
+      <nav className="flex-1 px-4">
+        <ul className="space-y-1">
           {menuItems.map((item) => (
             <li key={item.id}>
               <button
                 onClick={() => setActiveMenu(item.id)}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200 ${
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
                   activeMenu === item.id
-                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30'
-                    : 'text-dark-text-muted hover:bg-dark-bg hover:text-dark-text'
+                    ? 'active-nav-gradient text-indigo-400 border-l-2 border-indigo-500'
+                    : 'text-gray-400 hover:bg-[#1A202E] hover:text-gray-200'
                 }`}
               >
-                <span className="text-xl">{item.icon}</span>
-                <span className="font-medium">{item.label}</span>
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                  <path d={item.icon} />
+                </svg>
+                <span className="text-sm font-semibold">{item.label}</span>
               </button>
             </li>
           ))}
         </ul>
       </nav>
-
-      {/* User Profile
-      <div className="p-4 border-t border-dark-border">
-        <div className="flex items-center gap-3 px-4 py-3">
-          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold">
-            JD
-          </div>
-          <div className="flex-1">
-            <p className="text-sm font-medium text-dark-text">John Doe</p>
-            <p className="text-xs text-dark-text-muted">Admin</p>
-          </div>
-        </div>
-      </div> */}
     </aside>
   )
 }

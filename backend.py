@@ -114,8 +114,46 @@ class TicketDB(Base):
     created_at = Column(String, default=lambda: datetime.utcnow().isoformat())
     message_id = Column(String, nullable=True)
     is_deleted = Column(Boolean, default=False)
+    source_email_id = Column(String, nullable=True)
+    sender_name = Column(String, nullable=True)
+    sender_email = Column(String, nullable=True)
 
 Base.metadata.create_all(bind=engine)
+
+# Add columns if they don't exist (migration for existing databases)
+def migrate_database():
+    """Add missing columns to existing tickets table."""
+    try:
+        from sqlalchemy import text
+        with engine.connect() as conn:
+            # Check if column exists
+            result = conn.execute(text("PRAGMA table_info(tickets)"))
+            columns = [row[1] for row in result]
+            
+            # Add source_email_id if missing
+            if 'source_email_id' not in columns:
+                conn.execute(text("ALTER TABLE tickets ADD COLUMN source_email_id VARCHAR"))
+                print("Database migrated: added source_email_id column")
+            
+            # Add sender_name if missing
+            if 'sender_name' not in columns:
+                conn.execute(text("ALTER TABLE tickets ADD COLUMN sender_name VARCHAR"))
+                print("Database migrated: added sender_name column")
+            
+            # Add sender_email if missing
+            if 'sender_email' not in columns:
+                conn.execute(text("ALTER TABLE tickets ADD COLUMN sender_email VARCHAR"))
+                print("Database migrated: added sender_email column")
+            
+            if 'source_email_id' in columns and 'sender_name' in columns and 'sender_email' in columns:
+                print("Database check: all columns already exist")
+            
+            conn.commit()
+    except Exception as e:
+        print(f"Database migration warning: {e}")
+
+# Run migration on startup
+migrate_database()
 
 # Pydantic models
 class Email(BaseModel):
@@ -367,10 +405,201 @@ def load_environment():
     base_url = os.getenv('COMPOSIO_BASE_URL')
     return api_key, base_url
 
+
+def parse_sender(from_header: str) -> tuple:
+    """
+    Parse sender name and email from "From" header.
+    
+    Args:
+        from_header: The From header string (e.g., "Name <email@example.com>" or "Name [email@example.com](mailto:email@example.com)")
+    
+    Returns:
+        Tuple of (sender_name, sender_email)
+    """
+    if not from_header:
+        return '', ''
+    
+    # Clean up the from_header - remove markdown link format if present
+    # Pattern: "Name [email@example.com](mailto:email@example.com)"
+    markdown_match = re.match(r'^"?(.+?)"?\s*\[([^\]]+)\]\(mailto:[^)]+\)', from_header)
+    if markdown_match:
+        name = markdown_match.group(1).strip()
+        email = markdown_match.group(2).strip()
+        return name, email
+    
+    # Pattern: "Name <email@example.com>"
+    angle_match = re.match(r'^"?(.+?)"?\s*<(.+?)>$', from_header)
+    if angle_match:
+        name = angle_match.group(1).strip()
+        email = angle_match.group(2).strip()
+        return name, email
+    
+    # If no match, try to extract just the email
+    email_match = re.search(r'[\w.-]+@[\w.-]+\.\w+', from_header)
+    if email_match:
+        # Try to extract name before email
+        parts = from_header.split(email_match.group(0))
+        name = parts[0].strip().strip('"<>')
+        return name, email_match.group(0)
+    
+    # If no match, just return the whole thing as email
+    return '', from_header.strip()
+
+
+def check_ticket_exists(source_email_id: str) -> bool:
+    """
+    Check if a ticket already exists for the given email ID.
+    
+    Args:
+        source_email_id: The email ID to check
+    
+    Returns:
+        True if ticket exists, False otherwise
+    """
+    try:
+        db = SessionLocal()
+        existing = db.query(TicketDB).filter(
+            TicketDB.source_email_id == source_email_id
+        ).first()
+        db.close()
+        return existing is not None
+    except Exception:
+        return False
+
+
+def create_ticket_from_email(email_data: dict) -> Optional[TicketDB]:
+    """
+    Automatically create a ticket from email data.
+    
+    Args:
+        email_data: Dictionary containing email fields (id, subject, from, date, body)
+    
+    Returns:
+        Created TicketDB object or None if creation fails
+    """
+    import uuid
+    try:
+        # Check if ticket already exists for this email first
+        source_email_id = email_data.get('id', '')
+        if check_ticket_exists(source_email_id):
+            email_subject = email_data.get('subject', 'No Subject')
+            print(f"Ticket already exists for email: {email_subject}")
+            return None
+        
+        # Debug log: Creating ticket for email
+        email_subject = email_data.get('subject', 'No Subject')
+        print("Creating ticket for email:", email_subject)
+        
+        db = SessionLocal()
+        
+        # Create new ticket
+        db_id = str(uuid.uuid4())
+        ticket_count = db.query(TicketDB).count()
+        short_ticket_id = str(ticket_count + 1).zfill(3)
+        
+        # Extract title from subject, removing "Re: " prefix
+        subject = email_data.get('subject', 'No Subject')
+        title = subject.replace('Re: ', '').replace('re: ', '').strip()
+        
+        # Get body content
+        body = email_data.get('body', '') or 'No content'
+        
+        # Parse sender name and email from "from" field
+        from_field = email_data.get('from', '') or ''
+        sender_name, sender_email = parse_sender(from_field)
+        
+        db_ticket = TicketDB(
+            id=db_id,
+            ticket_id=short_ticket_id,
+            title=title,
+            description=body[:5000] if body else 'No content',  # Limit description length
+            priority="medium",
+            status="open",
+            created_at=datetime.utcnow().isoformat(),
+            message_id=None,
+            source_email_id=source_email_id,
+            sender_name=sender_name,
+            sender_email=sender_email
+        )
+        
+        db.add(db_ticket)
+        db.commit()
+        db.refresh(db_ticket)
+        db.close()
+        
+        print(f"Successfully created ticket: #{short_ticket_id} - {title}")
+        return db_ticket
+        
+    except Exception as e:
+        print(f"Error creating ticket from email: {e}")
+        return None
+
 # FastAPI app
 app = FastAPI(title="Email Reader API", version="1.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 email_reader = None
+
+# ============ CACHE LAYER FOR PERFORMANCE OPTIMIZATION ============
+import time
+
+# Cache configuration
+CACHE_TTL_SECONDS = 60  # Cache valid for 60 seconds
+
+# In-memory cache storage
+cache = {
+    "emails": [],  # Cached email threads
+    "tickets": [],  # Cached tickets list
+    "last_fetch_time": 0,  # Timestamp of last Gmail fetch
+    "last_tickets_time": 0,  # Timestamp of last tickets fetch
+    "processed_thread_ids": set()  # Track which thread IDs have been processed
+}
+
+def is_cache_valid(last_time: float) -> bool:
+    """Check if cache is still valid based on TTL."""
+    return (time.time() - last_time) < CACHE_TTL_SECONDS
+
+def get_cached_emails():
+    """Get cached emails if available and valid."""
+    if is_cache_valid(cache["last_fetch_time"]):
+        print(f"[CACHE HIT] Returning {len(cache['emails'])} cached emails")
+        return cache["emails"]
+    return None
+
+def set_cached_emails(emails: list):
+    """Set cached emails with current timestamp."""
+    cache["emails"] = emails
+    cache["last_fetch_time"] = time.time()
+    print(f"[CACHE SET] Cached {len(emails)} emails at {time.time()}")
+
+def get_cached_tickets():
+    """Get cached tickets if available and valid."""
+    if is_cache_valid(cache["last_tickets_time"]):
+        print(f"[CACHE HIT] Returning {len(cache['tickets'])} cached tickets")
+        return cache["tickets"]
+    return None
+
+def set_cached_tickets(tickets: list):
+    """Set cached tickets with current timestamp."""
+    cache["tickets"] = tickets
+    cache["last_tickets_time"] = time.time()
+    print(f"[CACHE SET] Cached {len(tickets)} tickets at {time.time()}")
+
+def is_thread_processed(thread_id: str) -> bool:
+    """Check if a thread has already been processed."""
+    return thread_id in cache["processed_thread_ids"]
+
+def mark_thread_processed(thread_id: str):
+    """Mark a thread as processed."""
+    cache["processed_thread_ids"].add(thread_id)
+
+def clear_cache():
+    """Clear all cache (for testing/reset)."""
+    cache["emails"] = []
+    cache["tickets"] = []
+    cache["last_fetch_time"] = 0
+    cache["last_tickets_time"] = 0
+    cache["processed_thread_ids"] = set()
+    print("[CACHE] Cache cleared")
 
 @app.on_event("startup")
 async def startup_event():
@@ -475,29 +704,30 @@ class ThreadEmailResponse(BaseModel):
 async def get_emails_by_thread(max_results: int = 50):
     """
     Get emails organized by threadId with proper filtering.
-    
-    - Each thread is processed separately
-    - First message = description
-    - Remaining messages = commands
-    - Filters out irrelevant emails (Google security alerts, etc.)
+    Uses caching to avoid repeated Gmail API calls within 60 seconds.
     """
+    # Check cache first
+    cached = get_cached_emails()
+    if cached is not None:
+        return {
+            "threads": cached,
+            "total_threads": len(cached),
+            "unread_count": 0,
+            "replied_count": 0
+        }
+    
     if not email_reader:
         return {"threads": [], "total_threads": 0, "unread_count": 0, "replied_count": 0}
     
     try:
+        print("[CACHE MISS] Fetching emails from Gmail...")
+        
         # Always fetch at least 50 emails from Gmail
         fetch_count = max(max_results, 50)
         raw_emails = email_reader.read_emails(max_results=fetch_count)
         
         if not raw_emails:
             return {"threads": [], "total_threads": 0}
-        
-        # DEBUG: Check what's in raw_emails
-        print(f"\n=== DEBUG: raw_emails count: {len(raw_emails)} ===")
-        for idx, email in enumerate(raw_emails[:5]):
-            has_tm = 'thread_messages' in email
-            tm_count = len(email.get('thread_messages', [])) if has_tm else 0
-            print(f"Email {idx}: thread_id={email.get('thread_id')}, has_thread_messages={has_tm}, thread_messages count={tm_count}")
         
         # Process each email - each email already has thread_messages with ALL messages in the thread!
         processed_threads = []
@@ -548,13 +778,18 @@ async def get_emails_by_thread(max_results: int = 50):
                             cleaned_replies.append(cleaned)
                 command = "\n\n".join(cleaned_replies)
             
+            # Return raw email data: id, subject, from, date, body
             thread_output = {
-                'thread_id': email.get('thread_id', 'unknown'),
-                'title': title,
-                'description': description,
-                'command': command,
-                'from_email': primary_email.get('from_email', email.get('from_email', ''))
+                'id': email.get('thread_id', 'unknown'),
+                'subject': title,
+                'from': primary_email.get('from_email', email.get('from_email', '')),
+                'date': primary_email.get('date', email.get('date', '')),
+                'body': description if description else email.get('body', '')
             }
+            
+            # Automatically create a ticket from this email (NO AI PROCESSING)
+            # Ticket existence is checked inside create_ticket_from_email
+            create_ticket_from_email(thread_output)
             
             processed_threads.append(thread_output)
         
@@ -581,6 +816,9 @@ async def get_emails_by_thread(max_results: int = 50):
                 if len(thread_messages) > 1:
                     replied_count += 1
         
+        # Cache the results
+        set_cached_emails(processed_threads)
+        
         response_data = {
             "threads": processed_threads,
             "total_threads": total_threads,
@@ -600,16 +838,91 @@ async def get_emails_by_thread(max_results: int = 50):
 
 @app.get("/tickets")
 async def get_tickets(include_deleted: bool = False):
+    """Get lightweight ticket list - only returns essential fields for list display."""
     try:
         db = SessionLocal()
         if include_deleted:
-            tickets = db.query(TicketDB).all()
+            # Only select needed columns for faster query
+            tickets = db.query(
+                TicketDB.id,
+                TicketDB.ticket_id,
+                TicketDB.title,
+                TicketDB.description,
+                TicketDB.status,
+                TicketDB.created_at
+            ).all()
         else:
-            tickets = db.query(TicketDB).filter(TicketDB.is_deleted == False).all()
+            tickets = db.query(
+                TicketDB.id,
+                TicketDB.ticket_id,
+                TicketDB.title,
+                TicketDB.description,
+                TicketDB.status,
+                TicketDB.created_at
+            ).filter(TicketDB.is_deleted == False).all()
         db.close()
-        return {"tickets": [{"id": t.id, "ticket_id": t.ticket_id, "title": t.title, "description": t.description, "priority": t.priority, "status": t.status, "message_id": t.message_id, "is_deleted": t.is_deleted, "created_at": t.created_at} for t in tickets]}
+        
+        # Return lightweight data for list display
+        return {"tickets": [{
+            "id": t.id,
+            "ticket_id": t.ticket_id,
+            "title": t.title,
+            "description": t.description[:100] if t.description else "",  # Only first 100 chars for preview
+            "status": t.status,
+            "created_at": t.created_at
+        } for t in tickets]}
     except Exception:
         return {"tickets": []}
+
+@app.get("/tickets/{ticket_id}")
+async def get_ticket(ticket_id: str):
+    """Get a single ticket by ID or ticket_id."""
+    try:
+        db = SessionLocal()
+        ticket = db.query(TicketDB).filter(
+            (TicketDB.id == ticket_id) | (TicketDB.ticket_id == ticket_id)
+        ).first()
+        db.close()
+        
+        if not ticket:
+            return {"error": "Ticket not found"}
+        
+        # Get stored sender info
+        sender_name = ticket.sender_name or ''
+        sender_email = ticket.sender_email or ''
+        
+        # If no stored sender info, try to get from cached emails
+        if not sender_name and not sender_email and ticket.source_email_id:
+            try:
+                # Check cached emails for sender info
+                cached_emails = cache.get("emails", [])
+                for email in cached_emails:
+                    if email.get('id') == ticket.source_email_id:
+                        from_field = email.get('from', '') or ''
+                        sender_name, sender_email = parse_sender(from_field)
+                        print(f"Found sender from cached email: {sender_name} <{sender_email}>")
+                        break
+            except Exception as e:
+                print(f"Error getting sender from cache: {e}")
+        
+        return {
+            "ticket": {
+                "id": ticket.id,
+                "ticket_id": ticket.ticket_id,
+                "title": ticket.title,
+                "description": ticket.description,
+                "priority": ticket.priority,
+                "status": ticket.status,
+                "message_id": ticket.message_id,
+                "is_deleted": ticket.is_deleted,
+                "created_at": ticket.created_at,
+                "source_email_id": ticket.source_email_id,
+                "sender_name": sender_name,
+                "sender_email": sender_email
+            }
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.post("/create-ticket")
 async def create_ticket(request: CreateTicketRequest):
@@ -672,6 +985,12 @@ async def delete_ticket(ticket_id: str):
 @app.post("/mark-ticket-created")
 async def mark_ticket_created(email_id: str):
     return {"success": True, "message": "Email marked as ticket created"}
+
+@app.post("/cache/clear")
+async def clear_cache_endpoint():
+    """Clear the in-memory cache (for testing/reset)."""
+    clear_cache()
+    return {"success": True, "message": "Cache cleared"}
 
 if __name__ == "__main__":
     import uvicorn
