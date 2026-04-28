@@ -22,7 +22,7 @@ function Dashboard({ activeMenu }) {
     
     try {
       // Use /emails/by-thread to get threads with replies
-      const response = await fetch('http://localhost:8000/emails/by-thread')
+      const response = await fetch('http://localhost:8000/emails/by-thread?force=true')
       
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)

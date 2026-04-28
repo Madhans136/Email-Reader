@@ -32,3 +32,81 @@ body {
 .active-nav-gradient {
   background: linear-gradient(90deg, rgba(99, 102, 241, 0.15) 0%, rgba(99, 102, 241, 0) 100%);
 }
+
+/* Ticket Description Markdown Styles */
+.ticket-description {
+  line-height: 1.7;
+  white-space: pre-line;
+  word-break: break-word;
+}
+
+.ticket-description p {
+  margin-bottom: 10px;
+}
+
+.ticket-description ul {
+  margin-left: 20px;
+  list-style-type: disc;
+  margin-bottom: 10px;
+}
+
+.ticket-description ol {
+  margin-left: 20px;
+  list-style-type: decimal;
+  margin-bottom: 10px;
+}
+
+.ticket-description li {
+  margin-bottom: 4px;
+}
+
+.ticket-description h1,
+.ticket-description h2,
+.ticket-description h3,
+.ticket-description h4,
+.ticket-description h5,
+.ticket-description h6 {
+  font-weight: 600;
+  margin-top: 16px;
+  margin-bottom: 8px;
+}
+
+.ticket-description strong {
+  font-weight: 600;
+}
+
+.ticket-description em {
+  font-style: italic;
+}
+
+.ticket-description code {
+  background-color: rgba(0, 0, 0, 0.2);
+  padding: 2px 4px;
+  border-radius: 4px;
+  font-family: monospace;
+}
+
+.ticket-description pre {
+  background-color: rgba(0, 0, 0, 0.2);
+  padding: 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin-bottom: 10px;
+}
+
+.ticket-description pre code {
+  background: none;
+  padding: 0;
+}
+
+.ticket-description a {
+  color: #6366F1;
+  text-decoration: underline;
+}
+
+.ticket-description blockquote {
+  border-left: 3px solid #6366F1;
+  padding-left: 12px;
+  margin-left: 0;
+  color: #9BA3AF;
+}

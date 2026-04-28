@@ -6,6 +6,7 @@ function TicketsPage() {
   const [tickets, setTickets] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [isSyncing, setIsSyncing] = useState(false)
   const [showModal, setShowModal] = useState(false)
   const [formData, setFormData] = useState({
     title: '',
@@ -16,6 +17,27 @@ function TicketsPage() {
   useEffect(() => {
     fetchTickets()
   }, [])
+
+  const syncInboxAndFetchTickets = async (force = false) => {
+    setIsSyncing(true)
+    setError(null)
+
+    try {
+      const response = await fetch(`http://localhost:8000/emails/by-thread${force ? '?force=true' : ''}`)
+
+      if (!response.ok) {
+        throw new Error(`Inbox sync failed! status: ${response.status}`)
+      }
+
+      await fetchTickets()
+    } catch (err) {
+      console.error('Error syncing inbox:', err)
+      setError(err.message)
+      setIsLoading(false)
+    } finally {
+      setIsSyncing(false)
+    }
+  }
 
   const fetchTickets = async () => {
     setIsLoading(true)
@@ -29,6 +51,7 @@ function TicketsPage() {
       }
       
       const data = await response.json()
+      console.log(data.tickets)
       setTickets(data.tickets || [])
     } catch (err) {
       console.error('Error fetching tickets:', err)
@@ -119,7 +142,7 @@ function TicketsPage() {
             <p className="text-xl text-red-400">Error loading tickets</p>
             <p className="text-sm text-dark-text-muted mt-2">{error}</p>
             <button 
-              onClick={fetchTickets}
+              onClick={syncInboxAndFetchTickets}
               className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
             >
               Retry
@@ -142,10 +165,12 @@ function TicketsPage() {
         </div>
         <div className="flex items-center gap-3">
           <button 
-            onClick={fetchTickets}
-            className="p-2 rounded-lg bg-dark-bg hover:bg-dark-border text-dark-text-muted hover:text-dark-text transition-colors"
+            onClick={() => syncInboxAndFetchTickets(true)}
+            disabled={isSyncing}
+            className="px-4 py-2 rounded-lg bg-dark-bg hover:bg-dark-border text-dark-text-muted hover:text-dark-text transition-colors disabled:opacity-60"
+            title="Sync inbox and refresh tickets"
           >
-            <span className="text-xl">🔄</span>
+            {isSyncing ? 'Syncing...' : 'Sync Inbox'}
           </button>
           <button 
             onClick={() => setShowModal(true)}

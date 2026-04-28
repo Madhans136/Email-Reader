@@ -56,6 +56,30 @@ def clean_reply(body: str) -> str:
     return result.strip()
 
 
+def clean_command_reply(body: str) -> str:
+    """
+    Keep only the new reply text from a thread reply.
+    This is stricter than clean_reply because command should not include
+    the quoted original email content.
+    """
+    cleaned = clean_reply(body)
+    if not cleaned:
+        return ""
+
+    cut_patterns = [
+        r'\n_{5,}.*$',
+        r'\n-{5,}.*$',
+        r'\nSubject:\s.*$',
+        r'\nFrom:\s.*$',
+        r'\nOn\s+.+?\s+wrote:.*$',
+    ]
+
+    for pattern in cut_patterns:
+        cleaned = re.sub(pattern, '', cleaned, flags=re.IGNORECASE | re.DOTALL)
+
+    return cleaned.strip()
+
+
 def safe_parse_date(msg: dict) -> datetime:
     """
     Safely parse date from email message, handling multiple formats.
@@ -98,6 +122,7 @@ from email_reader import EmailReader
 
 # Database setup
 DATABASE_URL = "sqlite:///tickets.db"
+# DATABASE_URL = "sqlite:////tmp/tickets.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -107,8 +132,10 @@ class TicketDB(Base):
     __tablename__ = "tickets"
     id = Column(String, primary_key=True)
     ticket_id = Column(String, nullable=True)
+    thread_id = Column(String, nullable=True)
     title = Column(String, nullable=False)
     description = Column(String, nullable=True)
+    commands = Column(String, nullable=True)
     priority = Column(String, default="medium")
     status = Column(String, default="open")
     created_at = Column(String, default=lambda: datetime.utcnow().isoformat())
@@ -129,6 +156,15 @@ def migrate_database():
             # Check if column exists
             result = conn.execute(text("PRAGMA table_info(tickets)"))
             columns = [row[1] for row in result]
+            
+            # Add thread_id if missing
+            if 'thread_id' not in columns:
+                conn.execute(text("ALTER TABLE tickets ADD COLUMN thread_id VARCHAR"))
+                print("Database migrated: added thread_id column")
+
+            if 'commands' not in columns:
+                conn.execute(text("ALTER TABLE tickets ADD COLUMN commands VARCHAR"))
+                print("Database migrated: added commands column")
             
             # Add source_email_id if missing
             if 'source_email_id' not in columns:
@@ -319,7 +355,7 @@ def get_thread_output(email: dict) -> dict:
         
         if reply_body:
             # Clean the reply body to remove quoted content
-            cleaned_reply = clean_reply(reply_body)
+            cleaned_reply = clean_command_reply(reply_body)
             print(f"  Cleaned reply: {cleaned_reply[:100] if cleaned_reply else 'Empty'}...")
             command = cleaned_reply
     else:
@@ -432,6 +468,8 @@ def parse_sender(from_header: str) -> tuple:
     if angle_match:
         name = angle_match.group(1).strip()
         email = angle_match.group(2).strip()
+        print("++++++++++++++")
+        print(name, email, "I am the name of the sender")
         return name, email
     
     # If no match, try to extract just the email
@@ -446,93 +484,153 @@ def parse_sender(from_header: str) -> tuple:
     return '', from_header.strip()
 
 
-def check_ticket_exists(source_email_id: str) -> bool:
-    """
-    Check if a ticket already exists for the given email ID.
-    
-    Args:
-        source_email_id: The email ID to check
-    
-    Returns:
-        True if ticket exists, False otherwise
-    """
+def check_ticket_exists(source_email_id: str, thread_id: str) -> bool:
     try:
         db = SessionLocal()
-        existing = db.query(TicketDB).filter(
-            TicketDB.source_email_id == source_email_id
-        ).first()
+
+        existing = None
+
+        if source_email_id and source_email_id != "unknown":
+            existing = db.query(TicketDB).filter(
+                TicketDB.source_email_id == source_email_id
+            ).first()
+
+        if not existing and thread_id and thread_id != "unknown":
+            existing = db.query(TicketDB).filter(
+                TicketDB.thread_id == thread_id
+            ).first()
+
         db.close()
         return existing is not None
-    except Exception:
+
+    except Exception as e:
+        print("check_ticket_exists error:", e)
         return False
 
 
 def create_ticket_from_email(email_data: dict) -> Optional[TicketDB]:
-    """
-    Automatically create a ticket from email data.
-    
-    Args:
-        email_data: Dictionary containing email fields (id, subject, from, date, body)
-    
-    Returns:
-        Created TicketDB object or None if creation fails
-    """
     import uuid
     try:
-        # Check if ticket already exists for this email first
+        db = SessionLocal()
+
         source_email_id = email_data.get('id', '')
-        if check_ticket_exists(source_email_id):
-            email_subject = email_data.get('subject', 'No Subject')
-            print(f"Ticket already exists for email: {email_subject}")
-            return None
-        
-        # Debug log: Creating ticket for email
+        thread_id = email_data.get('thread_id', '')
+
+        existing_ticket = None
+
+        if source_email_id and source_email_id != "unknown":
+            existing_ticket = db.query(TicketDB).filter(
+                TicketDB.source_email_id == source_email_id
+            ).first()
+
+        if not existing_ticket:
+            if thread_id and thread_id != "unknown":
+                existing_ticket = db.query(TicketDB).filter(
+                    TicketDB.thread_id == thread_id
+                ).first()
+
+        if existing_ticket:
+            new_command = email_data.get('command', '')
+            if new_command:
+                existing_ticket.commands = new_command
+                db.commit()
+                print(f"Updated commands for ticket: {existing_ticket.ticket_id}")
+            if not existing_ticket.sender_name and not existing_ticket.sender_email:
+                from_field = email_data.get('from', '') or email_data.get('from_email', '') or ''
+                sender_name, sender_email = parse_sender(from_field)
+                if sender_name or sender_email:
+                    existing_ticket.sender_name = sender_name
+                    existing_ticket.sender_email = sender_email
+                    db.commit()
+                    print(f"Updated sender for ticket: {existing_ticket.ticket_id}")
+            db.close()
+            return existing_ticket
+
+        # Debug log
         email_subject = email_data.get('subject', 'No Subject')
         print("Creating ticket for email:", email_subject)
-        
-        db = SessionLocal()
-        
+
         # Create new ticket
         db_id = str(uuid.uuid4())
         ticket_count = db.query(TicketDB).count()
         short_ticket_id = str(ticket_count + 1).zfill(3)
-        
-        # Extract title from subject, removing "Re: " prefix
+
         subject = email_data.get('subject', 'No Subject')
         title = subject.replace('Re: ', '').replace('re: ', '').strip()
-        
-        # Get body content
+
         body = email_data.get('body', '') or 'No content'
-        
-        # Parse sender name and email from "from" field
-        from_field = email_data.get('from', '') or ''
+
+        from_field = email_data.get('from', '') or email_data.get('from_email', '') or ''
         sender_name, sender_email = parse_sender(from_field)
-        
+
         db_ticket = TicketDB(
             id=db_id,
             ticket_id=short_ticket_id,
+            thread_id=thread_id,
             title=title,
-            description=body[:5000] if body else 'No content',  # Limit description length
+            description=body[:5000] if body else 'No content',
+            commands=email_data.get('command', ''),
             priority="medium",
             status="open",
             created_at=datetime.utcnow().isoformat(),
             message_id=None,
-            source_email_id=source_email_id,
+            source_email_id=source_email_id if source_email_id != "unknown" else None,
             sender_name=sender_name,
             sender_email=sender_email
         )
-        
+
         db.add(db_ticket)
         db.commit()
         db.refresh(db_ticket)
         db.close()
-        
+
         print(f"Successfully created ticket: #{short_ticket_id} - {title}")
         return db_ticket
-        
+
     except Exception as e:
         print(f"Error creating ticket from email: {e}")
         return None
+    
+def is_ticket_email(email: dict) -> bool:
+    subject = (email.get('subject') or '').lower()
+    body = (email.get('body') or '').lower()
+
+    # reject promotional/newsletter mails
+    blocked_keywords = [
+        'welcome',
+        'lovable',
+        'cline',
+        'gemini',
+        'composio',
+        'credits',
+        'improve',
+        'workflow',
+        'kanban',
+        'ship',
+        'using',
+        'how to',
+        'announcement'
+    ]
+
+    if any(word in subject for word in blocked_keywords):
+        return False
+
+    # allow only issue/request mails
+    allowed_keywords = [
+        'issue',
+        'error',
+        'request',
+        'problem',
+        'unable',
+        'not working',
+        'failed',
+        'access',
+        'wifi',
+        'battery',
+        'login'
+    ]
+
+    return any(word in subject or word in body for word in allowed_keywords)
 
 # FastAPI app
 app = FastAPI(title="Email Reader API", version="1.0.0")
@@ -543,7 +641,7 @@ email_reader = None
 import time
 
 # Cache configuration
-CACHE_TTL_SECONDS = 60  # Cache valid for 60 seconds
+CACHE_TTL_SECONDS = 300  # Cache valid for 60 seconds
 
 # In-memory cache storage
 cache = {
@@ -603,16 +701,26 @@ def clear_cache():
 
 @app.on_event("startup")
 async def startup_event():
+    # Keep startup fast. Gmail/Composio is initialized only when an email sync is requested.
+    return
+
+
+def ensure_email_reader() -> bool:
     global email_reader
+    if email_reader:
+        return True
+
     api_key, base_url = load_environment()
     if not api_key:
-        return
+        return False
     if not base_url:
         base_url = "https://agent.composio.io"
     try:
         email_reader = EmailReader(api_key=api_key, base_url=base_url)
+        return True
     except Exception:
         email_reader = None
+        return False
 
 @app.get("/")
 async def root():
@@ -627,7 +735,7 @@ async def get_emails(max_results: int = 50):
     - Filtering out irrelevant emails (Google security alerts, etc.)
     - Thread-level data included for separate processing
     """
-    if not email_reader:
+    if not ensure_email_reader():
         return {"inbox": [], "replied": [], "total_inbox": 0, "total_replied": 0}
     
     try:
@@ -701,34 +809,57 @@ class ThreadEmailResponse(BaseModel):
 
 
 @app.get("/emails/by-thread", response_model=ThreadEmailResponse)
-async def get_emails_by_thread(max_results: int = 50):
+async def get_emails_by_thread(max_results: int = 50, force: bool = False):
     """
     Get emails organized by threadId with proper filtering.
     Uses caching to avoid repeated Gmail API calls within 60 seconds.
     """
-    # Check cache first
     cached = get_cached_emails()
-    if cached is not None:
+    if cached is not None and not force:
         return {
             "threads": cached,
             "total_threads": len(cached),
             "unread_count": 0,
             "replied_count": 0
         }
-    
-    if not email_reader:
+
+    if not force:
+        return {"threads": [], "total_threads": 0, "unread_count": 0, "replied_count": 0}
+
+    if not ensure_email_reader():
+        if cached is not None:
+            return {
+                "threads": cached,
+                "total_threads": len(cached),
+                "unread_count": 0,
+                "replied_count": 0
+            }
         return {"threads": [], "total_threads": 0, "unread_count": 0, "replied_count": 0}
     
     try:
-        print("[CACHE MISS] Fetching emails from Gmail...")
+        print("[CACHE CHECK] Fetching emails from Gmail for new threads...")
         
         # Always fetch at least 50 emails from Gmail
         fetch_count = max(max_results, 50)
         raw_emails = email_reader.read_emails(max_results=fetch_count)
         
         if not raw_emails:
+            if cached is not None:
+                print("[CACHE FALLBACK] Gmail fetch returned no emails, returning cached threads")
+                return {
+                    "threads": cached,
+                    "total_threads": len(cached),
+                    "unread_count": 0,
+                    "replied_count": 0
+                }
             return {"threads": [], "total_threads": 0}
         
+        # Sort fetched email threads by newest message date first
+        try:
+            raw_emails = sorted(raw_emails, key=lambda e: safe_parse_date(e), reverse=True)
+        except Exception:
+            pass
+
         # Process each email - each email already has thread_messages with ALL messages in the thread!
         processed_threads = []
         
@@ -742,9 +873,13 @@ async def get_emails_by_thread(max_results: int = 50):
             
             # Use first message for filtering check
             primary_email = thread_messages[0]
+            thread_id = email.get('thread_id', 'unknown')
+            subject = primary_email.get('subject', '') or email.get('subject', '')
+            print(f"[THREAD] fetched subject='{subject}' thread_id='{thread_id}' id='{email.get('id', 'unknown')}'")
             
             # Filter out irrelevant emails
             if not is_relevant_email(primary_email):
+                print("  skipped irrelevant primary email")
                 continue
             
             # Process this thread - direct description/command assignment
@@ -753,6 +888,7 @@ async def get_emails_by_thread(max_results: int = 50):
                 sorted_messages = sorted(thread_messages, key=safe_parse_date)
             except Exception:
                 # Skip this email if date parsing fails
+                print(f"  skipped due to date parse failure for thread_id='{thread_id}'")
                 continue
             
             # Get subject from first message
@@ -773,29 +909,48 @@ async def get_emails_by_thread(max_results: int = 50):
                 for msg in sorted_messages[1:]:
                     raw_body = msg.get('body', '')
                     if raw_body:
-                        cleaned = clean_reply(raw_body)
+                        cleaned = clean_command_reply(raw_body)
                         if cleaned:
                             cleaned_replies.append(cleaned)
                 command = "\n\n".join(cleaned_replies)
             
             # Return raw email data: id, subject, from, date, body
             thread_output = {
-                'id': email.get('thread_id', 'unknown'),
+                'id': email.get('id', 'unknown'),   # actual email id
+                'thread_id': email.get('thread_id', 'unknown'),
                 'subject': title,
                 'from': primary_email.get('from_email', email.get('from_email', '')),
                 'date': primary_email.get('date', email.get('date', '')),
-                'body': description if description else email.get('body', '')
+                'body': description if description else email.get('body', ''),
+                'command': command 
             }
-            
-            # Automatically create a ticket from this email (NO AI PROCESSING)
-            # Ticket existence is checked inside create_ticket_from_email
-            create_ticket_from_email(thread_output)
-            
+
+            thread_id = email.get('thread_id', 'unknown')
+            print(f"[THREAD] processing subject='{title}' thread_id='{thread_id}' id='{thread_output['id']}'")
+            if not is_ticket_email(thread_output):
+                print("  skipped non-ticket thread based on is_ticket_email")
+            else:
+                if is_thread_processed(thread_id):
+                    print("  thread already processed, checking for command update")
+                ticket = create_ticket_from_email(thread_output)
+                if ticket:
+                    if not is_thread_processed(thread_id):
+                        mark_thread_processed(thread_id)
+                        print("  marked thread as processed")
+                    print(f"  ticket created/updated: ticket_id={ticket.ticket_id} source_email_id={ticket.source_email_id}")
+                else:
+                    print("  ticket creation/update failed or skipped")
+
             processed_threads.append(thread_output)
         
         # Sort threads by date (most recent first) using safe date parsing
         try:
-            processed_threads.sort(key=lambda t: safe_parse_date({'date': t.get('description', ''), 'internal_date': t.get('thread_messages', [{}])[0].get('internal_date') if t.get('thread_messages') else None}), reverse=True)
+            # processed_threads.sort(key=lambda t: safe_parse_date({'date': t.get('description', ''), 'internal_date': t.get('thprocessed_threads.sortread_messages', [{}])[0].get('internal_date') if t.get('thread_messages') else None}), reverse=True)
+
+            processed_threads.sort(
+                key=lambda t: safe_parse_date({'date': t.get('date', '')}),
+                reverse=True
+            )
         except Exception:
             pass  # Keep original order if sorting fails
         
@@ -846,6 +1001,7 @@ async def get_tickets(include_deleted: bool = False):
             tickets = db.query(
                 TicketDB.id,
                 TicketDB.ticket_id,
+                TicketDB.thread_id,
                 TicketDB.title,
                 TicketDB.description,
                 TicketDB.status,
@@ -855,22 +1011,53 @@ async def get_tickets(include_deleted: bool = False):
             tickets = db.query(
                 TicketDB.id,
                 TicketDB.ticket_id,
+                TicketDB.thread_id,
                 TicketDB.title,
                 TicketDB.description,
                 TicketDB.status,
                 TicketDB.created_at
             ).filter(TicketDB.is_deleted == False).all()
         db.close()
+
+        thread_dates = {
+            email.get('thread_id'): email.get('date', '')
+            for email in cache.get("emails", [])
+            if email.get('thread_id')
+        }
+
+        def ticket_sort_time(ticket):
+            thread_date = thread_dates.get(ticket.thread_id)
+            if thread_date:
+                return safe_parse_date({'date': thread_date}).timestamp()
+            try:
+                return datetime.fromisoformat(ticket.created_at).timestamp()
+            except Exception:
+                return 0
+
+        tickets = sorted(tickets, key=ticket_sort_time, reverse=True)
         
+        filtered_tickets = []
+        for t in tickets:
+            title = (t.title or "").strip().lower()
+            desc = (t.description or "").strip().lower()
+        
+            # skip junk tickets
+            if title in ["hi", "hello", "test"] or desc in ["hi", "hello", "test"]:
+                continue
+            
+            filtered_tickets.append({
+                "id": t.id,
+                "ticket_id": t.ticket_id,
+                "title": t.title,
+                "description": t.description[:100] if t.description else "",
+                "status": t.status,
+                "created_at": t.created_at
+            })
+        
+        return {"tickets": filtered_tickets}
+                
         # Return lightweight data for list display
-        return {"tickets": [{
-            "id": t.id,
-            "ticket_id": t.ticket_id,
-            "title": t.title,
-            "description": t.description[:100] if t.description else "",  # Only first 100 chars for preview
-            "status": t.status,
-            "created_at": t.created_at
-        } for t in tickets]}
+        # return {}
     except Exception:
         return {"tickets": []}
 
@@ -892,12 +1079,14 @@ async def get_ticket(ticket_id: str):
         sender_email = ticket.sender_email or ''
         
         # If no stored sender info, try to get from cached emails
-        if not sender_name and not sender_email and ticket.source_email_id:
+        if not sender_name and not sender_email:
             try:
                 # Check cached emails for sender info
                 cached_emails = cache.get("emails", [])
                 for email in cached_emails:
-                    if email.get('id') == ticket.source_email_id:
+                    source_matches = ticket.source_email_id and email.get('id') == ticket.source_email_id
+                    thread_matches = ticket.thread_id and email.get('thread_id') == ticket.thread_id
+                    if source_matches or thread_matches:
                         from_field = email.get('from', '') or ''
                         sender_name, sender_email = parse_sender(from_field)
                         print(f"Found sender from cached email: {sender_name} <{sender_email}>")
@@ -911,6 +1100,7 @@ async def get_ticket(ticket_id: str):
                 "ticket_id": ticket.ticket_id,
                 "title": ticket.title,
                 "description": ticket.description,
+                "commands": ticket.commands,
                 "priority": ticket.priority,
                 "status": ticket.status,
                 "message_id": ticket.message_id,

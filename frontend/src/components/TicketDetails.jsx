@@ -65,6 +65,43 @@ function TicketDetails() {
     }
   }
 
+  // Format description text with bold section headings and proper line breaks
+  const formatDescriptionHtml = (description) => {
+    if (!description) return ''
+    
+    // Split into lines for processing
+    const lines = description.split('\n')
+    
+    // Process each line
+    const formattedLines = lines.map(line => {
+      const trimmedLine = line.trim()
+      
+      // Check if line is a section header (ends with colon and contains specific keywords)
+      const sectionKeywords = ['Description', 'Steps Observed', 'Expected Behavior', 'Actual Behavior', 'Signature', 'Steps to Reproduce', 'Priority', 'Environment']
+      const isSectionHeader = sectionKeywords.some(keyword => 
+        trimmedLine.toLowerCase().includes(keyword.toLowerCase()) && trimmedLine.endsWith(':')
+      )
+      
+      if (isSectionHeader) {
+        // Remove markdown bold markers and wrap in strong tags
+        const cleanLine = trimmedLine.replace(/^\*+\s*/, '').replace(/\*+$/, '')
+        return `<strong>${cleanLine}</strong>`
+      }
+      
+      // Check if line is a bullet point
+      if (trimmedLine.startsWith('- ') || trimmedLine.startsWith('* ')) {
+        const bulletText = trimmedLine.substring(2).replace(/^\*+\s*/, '').replace(/\*+$/, '')
+        return `• ${bulletText}`
+      }
+      
+      // Return regular line with markdown bold removed
+      return trimmedLine.replace(/^\*+\s*/, '').replace(/\*+$/, '')
+    })
+    
+    // Join lines with <br> tags for proper line breaks
+    return formattedLines.join('<br>')
+  }
+
 
   if (isLoading) {
     return (
@@ -187,15 +224,53 @@ function TicketDetails() {
             </div>
           </div>
 
-          {/* Description */}
+            {/* Description */}
           <div className="bg-dark-card rounded-xl border border-dark-border p-6">
             <h2 className="text-lg font-semibold text-dark-text mb-4">Description</h2>
-            <div className="bg-dark-bg rounded-lg p-4">
-              <pre className="text-dark-text-muted whitespace-pre-wrap font-sans text-sm leading-relaxed">
-                {ticket.description || 'No description provided'}
-              </pre>
+            <div 
+              className="bg-dark-bg rounded-lg p-4"
+              style={{ 
+                width: '100%',
+                lineHeight: '1.7',
+                wordBreak: 'normal',
+                overflowWrap: 'normal'
+              }}
+            >
+              {ticket?.description ? (
+                <div 
+                  className="ticket-description font-sans text-sm text-dark-text"
+                  style={{
+                    whiteSpace: 'normal',
+                    lineHeight: '1.7',
+                    wordBreak: 'normal',
+                    overflowWrap: 'normal'
+                  }}
+                  dangerouslySetInnerHTML={{ __html: formatDescriptionHtml(ticket.description) }}
+                />
+              ) : (
+                <p className="text-dark-text-muted font-sans text-sm italic">No description provided</p>
+              )}
             </div>
           </div>
+
+          {/* Commands / Replies */}
+          {ticket?.commands && ticket.commands.trim() && (
+            <div className="bg-dark-card rounded-xl border border-dark-border p-6 mt-6">
+              <h2 className="text-lg font-semibold text-dark-text mb-4">Commands / Replies</h2>
+              <div 
+                className="bg-dark-bg rounded-lg p-4 text-dark-text"
+                style={{ 
+                  whiteSpace: 'pre-wrap',
+                  lineHeight: '1.7',
+                  width: '100%',
+                  wordBreak: 'normal',
+                  overflowWrap: 'normal'
+                }}
+              >
+                {ticket.commands}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -316,21 +316,27 @@ class EmailReader:
                     email['thread_messages'] = thread_messages
             
             # Process with LLM
-            processed_ids = set()
+            # processed_ids = set()
+            # for email in emails:
+            #     email_id = email.get('message_id') or email.get('id')
+            #     if email_id in processed_ids:
+            #         continue
+            #     processed_ids.add(email_id)
+                
+            #     analysis = self.analyze_email_with_llm(
+            #         email.get("subject", ""),
+            #         email.get("body", "")
+            #     )
+                
+            #     email["summary"] = analysis.get("summary")
+            #     email["intent"] = analysis.get("intent")
+            #     email["actions"] = analysis.get("actions")
+            #     email["is_replied"] = False
+            
             for email in emails:
-                email_id = email.get('message_id') or email.get('id')
-                if email_id in processed_ids:
-                    continue
-                processed_ids.add(email_id)
-                
-                analysis = self.analyze_email_with_llm(
-                    email.get("subject", ""),
-                    email.get("body", "")
-                )
-                
-                email["summary"] = analysis.get("summary")
-                email["intent"] = analysis.get("intent")
-                email["actions"] = analysis.get("actions")
+                email["summary"] = "N/A"
+                email["intent"] = "unknown"
+                email["actions"] = []
                 email["is_replied"] = False
             
             return emails
@@ -404,6 +410,7 @@ class EmailReader:
                 subject = self._safe_extract(email, 'subject')
                 thread_id = self._safe_extract(email, 'thread_id') or self._safe_extract(email, 'threadId')
                 message_id = self._safe_extract(email, 'message_id') or self._safe_extract(email, 'messageId')
+                email_id = self._safe_extract(email, 'id')
                 
                 in_reply_to = None
                 references = None
@@ -443,10 +450,10 @@ class EmailReader:
                             from_email = header.get('value', '')
                         elif header_name == 'date':
                             email_date = header.get('value', '')
-                            break
                 
                 if subject and subject != 'N/A':
                     email_data = {
+                        'id': email_id if email_id != 'N/A' else message_id,
                         'subject': subject,
                         'body': body if body != 'N/A' else 'No Body',
                         'thread_id': thread_id if thread_id != 'N/A' else 'N/A',
